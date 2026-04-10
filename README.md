@@ -14,6 +14,12 @@
 2. `CreateRemoteThread`
 3. `ResumeThread`
 
+<img width="674" height="666" alt="image" src="https://github.com/user-attachments/assets/25c18498-7eec-4c38-82ac-e4d83fa0e872" />
+
+
+<img width="1114" height="771" alt="image" src="https://github.com/user-attachments/assets/e3d7fe9d-4a75-4a31-9138-e72fcdad4425" />
+
+
 ### ⚠️ Disclaimer
 This project was created solely for educational purposes to study the Windows API and security methods. The author assumes no liability for any illegal use of this code.
 
