@@ -1,41 +1,44 @@
 #include <windows.h>
-#include <stdio.h>
-#include <string>
 
-void main() {
-    AllocConsole();
-    FILE* f;
-    freopen_s(&f, "CONOUT$", "w", stdout);
+void StartPayload() {
 
-    HWND hwnd = GetForegroundWindow();
+    if (!AllocConsole()) return;
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+
+    HWND hwnd = FindWindowA("Notepad", NULL);
     char originalTitle[256];
     GetWindowTextA(hwnd, originalTitle, 256);
 
-    printf("Sagittarius Loader Active...\n");
-    printf("Executing payload for 10 seconds.\n\n");
+    const char* msgStart = "Sagittarius Loader Active...\nExecuting payload for 10 seconds.\n\n";
+    WriteConsoleA(hOut, msgStart, lstrlenA(msgStart), NULL, NULL);
 
-    const int duration = 10;
+    char buffer[128];
     const int barWidth = 20;
 
-    for (int i = 0; i <= 100; i += 2) {
-        printf("\rProgress: [");
+    for (int i = 0; i <= 100; i += 5) {
         int pos = (i * barWidth) / 100;
-        for (int j = 0; j < barWidth; ++j) {
-            if (j < pos) printf("=");
-            else if (j == pos) printf(">");
-            else printf(" ");
-        }
-        printf("] %d%%", i);
-        fflush(stdout);
 
-        std::string newTitle = "Injection Status: " + std::to_string(i) + "%";
-        SetWindowTextA(hwnd, newTitle.c_str());
+        int len = wsprintfA(buffer, "\rProgress: [");
+        for (int j = 0; j < barWidth; ++j) {
+            buffer[len++] = (j < pos) ? '=' : (j == pos ? '>' : ' ');
+        }
+        wsprintfA(buffer + len, "] %d%%", i);
+
+        WriteConsoleA(hOut, buffer, lstrlenA(buffer), NULL, NULL);
+
+        char titleBuf[64];
+        wsprintfA(titleBuf, "Injection Status: %d%%", i);
+        SetWindowTextA(hwnd, titleBuf);
 
         Sleep(200);
     }
 
     SetWindowTextA(hwnd, originalTitle);
-    printf("\n\n[+] Task complete. Notepad title restored.\n");
+    const char* msgEnd = "\n\n[+] Task complete. Notepad title restored.\n";
+    WriteConsoleA(hOut, msgEnd, lstrlenA(msgEnd), NULL, NULL);
+
     MessageBoxA(NULL, "Payload finished! Now go for a workout.", "Success", MB_OK | MB_ICONEXCLAMATION);
-    Sleep(1500);
+
+    Sleep(2000);
+    FreeConsole();
 }
