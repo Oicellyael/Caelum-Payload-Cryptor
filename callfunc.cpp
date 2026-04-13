@@ -1,13 +1,41 @@
-﻿#include <windows.h>
+#include <windows.h>
+#include <stdio.h>
+#include <string>
 
+void main() {
+    AllocConsole();
+    FILE* f;
+    freopen_s(&f, "CONOUT$", "w", stdout);
 
-int main() {
-    int hp = 100;
-    while (hp > 0) {
-        hp -= 10;
-        Sleep(100); 
+    HWND hwnd = GetForegroundWindow();
+    char originalTitle[256];
+    GetWindowTextA(hwnd, originalTitle, 256);
+
+    printf("Sagittarius Loader Active...\n");
+    printf("Executing payload for 10 seconds.\n\n");
+
+    const int duration = 10;
+    const int barWidth = 20;
+
+    for (int i = 0; i <= 100; i += 2) {
+        printf("\rProgress: [");
+        int pos = (i * barWidth) / 100;
+        for (int j = 0; j < barWidth; ++j) {
+            if (j < pos) printf("=");
+            else if (j == pos) printf(">");
+            else printf(" ");
+        }
+        printf("] %d%%", i);
+        fflush(stdout);
+
+        std::string newTitle = "Injection Status: " + std::to_string(i) + "%";
+        SetWindowTextA(hwnd, newTitle.c_str());
+
+        Sleep(200);
     }
 
-    MessageBoxA(NULL, "Payload Executed! HP is 0.", "C++ Agent", MB_OK | MB_ICONEXCLAMATION);
-    return 0;
+    SetWindowTextA(hwnd, originalTitle);
+    printf("\n\n[+] Task complete. Notepad title restored.\n");
+    MessageBoxA(NULL, "Payload finished! Now go for a workout.", "Success", MB_OK | MB_ICONEXCLAMATION);
+    Sleep(1500);
 }
