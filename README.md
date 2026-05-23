@@ -1,39 +1,55 @@
-#  Loader (R&D)
+# Advanced Process Instrumentation and Thread Context Control Framework
 
-A sophisticated proof-of-concept shellcode loader written in C#, designed to demonstrate advanced evasion techniques and process instrumentation. This project focuses on in-memory execution while maintaining a low forensic footprint.
+## Overview
 
-## 🛠 Technical Features
+This research project is a low-level engineering proof of concept (PoC) written in C# and MASM. It is designed to demonstrate advanced concepts in native Windows process manipulation, cross-process memory management, and thread context synchronization.
 
-This loader implements several "under-the-hood" techniques to bypass modern defensive solutions (EDR/AV):
+The framework showcases how a controller application can programmatically launch a target process, modify its initialization attributes, securely update specific memory sections, and redirect execution flow at the hardware register level.
 
-* **PPID Spoofing:** Uses `InitializeProcThreadAttributeList` and `UpdateProcThreadAttribute` to spoof the parent process to `explorer.exe`, breaking process tree heuristics.
-* **Module Stomping (Section Overwriting):** * Dynamically locates `kernelbase.dll` via **PEB (Process Environment Block)** traversal.
-    * Identifies the `.text` section of the legitimate module.
-    * Overwrites the legitimate code section with encrypted payload to reside in "signed" memory space.
-* **Thread Hijacking:** * Launches a target process in a `SUSPENDED` state.
-    * Uses `GetThreadContext` and `SetThreadContext` to redirect execution flow to the stomped section.
-    * Preserves execution flow by pushing the original `RIP` onto the stack via an ASM stub.
-* **AES-256 Decryption:** Payloads are stored in AES-CBC encrypted format and decrypted in-memory only at runtime.
-* **Dynamic Configuration:** Fetches payload and target paths via a remote JSON config using `HttpClient`.
+---
 
-## 🏗 Project Structure
+##  Technical Concepts Demonstrated
 
-* **/sharp/**: The core C# loader responsible for process creation, injection, and thread manipulation.
-* **/asm/**: Low-level MASM stub used to preserve CPU registers and flags, ensuring a clean transition between the loader and the payload.
-* **/payload/**: A demo C++ payload that performs console allocation and UI manipulation (Notepad title bar progress) as a proof of execution.
+* **Process Attribute Customization (Parent-Child Hierarchy Management)**
+Leverages native Windows APIs (`InitializeProcThreadAttributeList` and `UpdateProcThreadAttribute`) to programmatically assign an alternative parent process (such as `explorer.exe`) during target creation. This explores how operating systems handle process tree inheritance and structural metadata.
+* **Module Overlay and Section Replacement (Dynamic Code Hot-Patching)**
+Demonstrates automated runtime memory analysis:
+* Traverses the remote **Process Environment Block (PEB)** to locate loaded modules like `kernelbase.dll`.
+* Parses the Portable Executable (PE) structure to find the executable `.text` section.
+* Replaces specific code segments with custom logic, practicing dynamic code instrumentation within signed memory spaces.
 
-## 🧪 Injection Workflow
 
-1.  **Configuration:** Download JSON config -> Decrypt AES-256 payload.
-2.  **Spoofing:** Locate `explorer.exe` -> Initialize Attribute List for Parent Process.
-3.  **Creation:** Start `target.exe` in `SUSPENDED` mode with spoofed PPID.
-4.  **Discovery:** Manually parse PEB to find `kernelbase.dll` base address in the remote process.
-5.  **Stomping:** Locate `.text` section -> `VirtualProtectEx` -> `WriteProcessMemory`.
-6.  **Hijacking:** `GetThreadContext` -> Update `Rsp`/`Rip` -> `SetThreadContext` -> `ResumeThread`.
+* **Context-Driven Thread Hijacking & State Preservation**
+Controls execution flow at the CPU level without breaking the host process:
+* Initializes the target process in a suspended state.
+* Intersects the main thread context using `GetThreadContext` and `SetThreadContext`.
+* Manages architectural registers (`RIP`, `RSP`) to redirect execution while using a low-level **MASM stub** to preserve original CPU flags and registers for a stable state transition.
 
+
+* **Cryptographic Data Protection**
+Implements secure data handling by storing payloads in an encrypted format (AES-256 CBC), ensuring that raw data is decrypted strictly in volatile memory only at the exact moment of execution.
+
+---
+
+##  Project Architecture
+
+* **/sharp/**: The core C# manager that handles process creation, memory operations, and low-level thread architecture.
+* **/asm/**: A Microsoft Macro Assembler (MASM) bootstrap stub that manages the CPU register stack, ensuring system stability during execution transitions.
+* **/payload/**: A sample C++ runtime library designed to demonstrate successful environment initialization and safe context handoff.
+
+---
+##  Dynamic Instrumentation Workflow
+
+1. **Configuration Retrieval:** The application securely fetches configuration parameters and decrypts the targeted payload directly into runtime memory.
+2. **Attribute Allocation:** The system creates a custom process attribute list to define the process tree hierarchy.
+3. **Suspended State Initialization:** The target process is safely created in a suspended state to allow memory preparation.
+4. **PEB Traversal:** The manager manually parses the target's internal PEB structures to resolve core module base addresses.
+5. **Memory Section Update:** The manager reconfigures section memory protections and updates the code segment with the prepared payload.
+6. **Register Synchronization:** The execution flow is synchronized by updating the thread's instruction pointer (`RIP`), followed by resuming the process thread execution.
+
+---
 
 <img width="674" height="666" alt="image" src="https://github.com/user-attachments/assets/25c18498-7eec-4c38-82ac-e4d83fa0e872" />
-
 
 ### **Section: Detection Insights**
 
@@ -42,22 +58,6 @@ This loader implements several "under-the-hood" techniques to bypass modern defe
 
 <img width="1173" height="1008" alt="image" src="https://github.com/user-attachments/assets/4ce5255d-2585-462e-9532-31768ea9318a" />
 
+## ⚠️ Academic Disclaimer
 
-**Why it is detected:**
-The detection is primarily triggered by the **behavioral signatures** of the injection workflow:
-1. **PPID Spoofing** via `UpdateProcThreadAttribute`.
-2. **Thread Hijacking** using `SetThreadContext`.
-3. **Module Stomping** in `kernelbase.dll`'s `.text` section.
-
-> *"This proves that the core logic successfully interacts with the target process's memory and control flow. The next phase of this R&D project will focus on custom obfuscation and 'Indirect Syscalls' to minimize this signature."*
-
-
-## ⚙️ Requirements
-
-* .NET 6.0+
-* Visual Studio 2022 (for C# and C++ parts)
-* MASM (Microsoft Macro Assembler) for the stub
-
-## ⚠️ Research Disclaimer
-
-This repository is intended for **educational and research purposes only**. It explores the concepts of software instrumentation, hardware-software synchronization, and real-time data visualization.
+*This repository is intended solely for educational, academic, and defensive research into operating system mechanics, software debugging, and native process instrumentation*
