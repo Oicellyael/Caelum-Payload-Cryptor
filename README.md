@@ -1,4 +1,4 @@
-# Sagittarius Loader (R&D)
+#  Loader (R&D)
 
 A sophisticated proof-of-concept shellcode loader written in C#, designed to demonstrate advanced evasion techniques and process instrumentation. This project focuses on in-memory execution while maintaining a low forensic footprint.
 
